@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>排班管理系统</title>
+    <style>
+        table {
+            border-collapse: collapse;
+            table-layout: fixed;
+            font-size: 11px;
+            width: auto;
+        }
+        th, td {
+            border: 1px solid #000;
+            padding: 1px;
+            text-align: center;
+            height: 16px;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+        td:first-child, th:first-child { width: 45px !important; }
+        td:nth-child(2), th:nth-child(2) { width: 25px !important; }
+        td:nth-child(n+3), th:nth-child(n+3) { width: 25px !important; }
+        .date-input {
+            width: 100%;
+            border: none;
+            text-align: center;
+            font-size: 11px;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            background: white;
+            padding: 20px;
+            border: 1px solid #ccc;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            z-index: 1000;
+        }
+        .work-types button { margin: 5px; }
+        .room-numbers {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 5px;
+            margin-top: 10px;
+        }
+        .wash-hand { color: red; }
+        .tour { color: black; }
+        .weekend { background-color: #e6f3ff; }
+        .selected-cell {
+            background-color: #e6f3ff;
+            outline: 2px solid #1890ff;
+        }
+        /* 移动端适配 */
+        @media screen and (max-width: 768px) {
+            .button-container button {
+                padding: 5px 10px;
+                font-size: 14px;
+                margin: 0 5px;
+            }
+            .modal {
+                width: 90%;
+                max-width: 300px;
+            }
+            .room-numbers button {
+                padding: 8px;
+                font-size: 14px;
+            }
+            .table-container {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div style="margin: 20px; text-align: center;">
+        <button onclick="saveSchedule()">保存排班</button>
+        <button onclick="deleteSelectedSchedule()">删除排班</button>
+        <button onclick="clearSchedule()">清除全部</button>
+        <button onclick="exportToExcel()">导出Excel</button>
+    </div>
+    <div class="table-container">
+        <table id="scheduleTable">
+            <thead>
+                <tr>
+                    <th></th>
+                    <th><input type="date" class="date-input" onchange="updateDates(this.value)"></th>
+                </tr>
+                <tr>
+                    <th>姓名</th>
+                    <th>统计</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <div id="scheduleModal" class="modal">
+        <div class="work-types">
+            <button data-type="洗手">洗手</button>
+            <button data-type="巡回">巡回</button>
+            <button data-type="休息">休息</button>
+            <button data-type="日间">日间</button>
+            <button data-type="护士站">护士站</button>
+        </div>
+        <div id="roomSelection" style="display: none;">
+            <div class="room-numbers"></div>
+        </div>
+    </div>
+
+    <script>
+        let selectedCell = null;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeTable();
+            setupEventListeners();
+        });
+
+        function updateDates(selectedDate) {
+            if (!selectedDate) return;
+            const dateRow = document.querySelector('#scheduleTable thead tr:first-child');
+            const date = new Date(selectedDate);
+            date.setDate(date.getDate() + 1);
+            
+            for (let i = 2; i < 32; i++) {
+                if (!dateRow.cells[i]) {
+                    const th = document.createElement('th');
+                    dateRow.appendChild(th);
+                }
+                dateRow.cells[i].textContent = `${date.getMonth() + 1}-${date.getDate()}`;
+                date.setDate(date.getDate() + 1);
+            }
+        }
+
+        function initializeTable() {
+            const headerRows = document.querySelector('#scheduleTable thead').rows;
+            const dateRow = headerRows[0];
+            const weekRow = headerRows[1];
+
+            // 生成日期行和星期行
+            for (let i = 2; i < 32; i++) {
+                dateRow.appendChild(document.createElement('th'));
+                const th = document.createElement('th');
+                const weekday = ['一', '二', '三', '四', '五', '六', '日'][(i - 2) % 7];
+                th.textContent = weekday;
+                if (weekday === '六' || weekday === '日') th.className = 'weekend';
+                weekRow.appendChild(th);
+            }
+
+            // 生成17行数据
+            const tbody = document.querySelector('#scheduleTable tbody');
+            for (let i = 0; i < 17; i++) {
+                const row = document.createElement('tr');
+                for (let j = 0; j < 32; j++) {
+                    const cell = document.createElement('td');
+                    if (j === 0) {
+                        cell.className = 'name-cell';
+                        cell.contentEditable = true;
+                    } else if (j === 1) {
+                        cell.className = 'stats-cell';
+                        cell.innerHTML = '洗0巡0日0护0休0';
+                    } else {
+                        cell.className = 'schedule-cell';
+                        cell.dataset.row = i;
+                        cell.dataset.col = j;
+                        cell.addEventListener('click', handleCellClick);
+                        if ((j - 2) % 7 >= 5) cell.className += ' weekend';
+                    }
+                    row.appendChild(cell);
+                }
+                tbody.appendChild(row);
+            }
+        }
+
+        function handleCellClick(e) {
+            const cell = e.target;
+            if (cell.textContent) {
+                if (selectedCell) selectedCell.classList.remove('selected-cell');
+                if (selectedCell !== cell) {
+                    cell.classList.add('selected-cell');
+                    selectedCell = cell;
+                } else {
+                    selectedCell = null;
+                }
+                return;
+            }
+            showScheduleModal(cell);
+        }
+
+        function showScheduleModal(cell) {
+            const modal = document.getElementById('scheduleModal');
+            const roomSelection = document.getElementById('roomSelection');
+            
+            // 获取点击单元格的位置
+            const rect = cell.getBoundingClientRect();
+            
+            // 设置弹窗位置
+            modal.style.position = 'absolute';
+            modal.style.top = (rect.top + window.scrollY) + 'px';
+            modal.style.left = (rect.left + window.scrollX) + 'px';
+            modal.style.transform = 'none';
+            
+            modal.style.display = 'block';
+            roomSelection.style.display = 'none';
+            modal.dataset.currentCell = `${cell.dataset.row}-${cell.dataset.col}`;
+        }
+
+        function showRoomSelection(type) {
+            const roomSelection = document.getElementById('roomSelection');
+            roomSelection.style.display = 'block';
+            roomSelection.innerHTML = '';
+            
+            const roomNumbers = document.createElement('div');
+            roomNumbers.className = 'room-numbers';
+            
+            for (let i = 1; i <= 14; i++) {
+                const button = document.createElement('button');
+                button.textContent = i;
+                button.className = type === '洗手' ? 'wash-hand' : 'tour';
+                button.onclick = () => selectRoom(type, i);
+                roomNumbers.appendChild(button);
+            }
+            
+            roomSelection.appendChild(roomNumbers);
+        }
+
+        function selectRoom(type, room) {
+            const modal = document.getElementById('scheduleModal');
+            const cell = document.querySelector(
+                `.schedule-cell[data-row="${modal.dataset.currentCell.split('-')[0]}"][data-col="${modal.dataset.currentCell.split('-')[1]}"]`
+            );
+            
+            if (type === '洗手') {
+                cell.textContent = `洗${room}`;
+                cell.className = 'schedule-cell wash-hand';
+            } else if (type === '巡回') {
+                cell.textContent = `巡${room}`;
+                cell.className = 'schedule-cell tour';
+            }
+            
+            modal.style.display = 'none';
+            updateStats(cell.parentElement);
+            saveSchedule();
+        }
+
+        function updateStats(row) {
+            const statsCell = row.querySelector('.stats-cell');
+            const scheduleCells = row.querySelectorAll('.schedule-cell');
+            
+            const stats = {
+                '洗': 0,
+                '巡': 0,
+                '护': 0,
+                '日': 0,
+                '休': 0
+            };
+            
+            scheduleCells.forEach(cell => {
+                const text = cell.textContent;
+                if (text.startsWith('洗')) stats['洗']++;
+                if (text.startsWith('巡')) stats['巡']++;
+                if (text === '护') stats['护']++;
+                if (text === '日') stats['日']++;
+                if (text === '休') stats['休']++;
+            });
+            
+            statsCell.innerHTML = `洗${stats['洗']}巡${stats['巡']}日${stats['日']}护${stats['护']}休${stats['休']}`;
+        }
+
+        function saveSchedule() {
+            const scheduleData = {
+                names: [],
+                schedule: []
+            };
+            
+            document.querySelectorAll('#scheduleTable tbody tr').forEach(row => {
+                scheduleData.names.push(row.querySelector('.name-cell').textContent);
+                const rowData = [];
+                row.querySelectorAll('.schedule-cell').forEach(cell => {
+                    rowData.push(cell.textContent);
+                });
+                scheduleData.schedule.push(rowData);
+            });
+            
+            localStorage.setItem('scheduleData', JSON.stringify(scheduleData));
+        }
+
+        function deleteSelectedSchedule() {
+            if (!selectedCell) {
+                alert('请先选择要删除的排班');
+                return;
+            }
+
+            selectedCell.textContent = '';
+            selectedCell.className = 'schedule-cell';
+            selectedCell.classList.remove('selected-cell');
+            updateStats(selectedCell.parentElement);
+            saveSchedule();
+            selectedCell = null;
+        }
+
+        function clearSchedule() {
+            if (confirm('确定要清除所有排班数据吗？')) {
+                selectedCell = null;
+                document.querySelectorAll('.schedule-cell').forEach(cell => {
+                    cell.textContent = '';
+                    cell.className = 'schedule-cell';
+                });
+                
+                document.querySelectorAll('.stats-cell').forEach(cell => {
+                    cell.innerHTML = '洗0巡0日0护0休0';
+                });
+                
+                localStorage.removeItem('scheduleData');
+            }
+        }
+
+        function exportToExcel() {
+            // 创建CSV内容
+            let csvContent = "\ufeff"; // 添加BOM以支持中文
+            
+            // 添加表头
+            const dateRow = document.querySelector('#scheduleTable thead tr:first-child');
+            csvContent += "姓名,统计";
+            for (let i = 2; i < dateRow.cells.length; i++) {
+                csvContent += "," + (dateRow.cells[i].textContent || "");
+            }
+            csvContent += "\n";
+
+            // 添加数据行
+            document.querySelectorAll('#scheduleTable tbody tr').forEach(row => {
+                // 添加姓名
+                csvContent += (row.querySelector('.name-cell').textContent || "") + ",";
+                // 添加统计
+                csvContent += (row.querySelector('.stats-cell').textContent || "");
+                // 添加排班数据
+                row.querySelectorAll('.schedule-cell').forEach(cell => {
+                    csvContent += "," + (cell.textContent || "");
+                });
+                csvContent += "\n";
+            });
+
+            // 创建并下载CSV文件
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `排班表_${new Date().toLocaleDateString().replace(/\//g, '-')}.csv`;
+            link.click();
+            URL.revokeObjectURL(link.href);
+        }
+
+        document.querySelector('.work-types').addEventListener('click', function(e) {
+            if (e.target.tagName === 'BUTTON') {
+                const workType = e.target.dataset.type;
+                const modal = document.getElementById('scheduleModal');
+                const currentCell = document.querySelector(
+                    `.schedule-cell[data-row="${modal.dataset.currentCell.split('-')[0]}"][data-col="${modal.dataset.currentCell.split('-')[1]}"]`
+                );
+
+                if (workType === '洗手' || workType === '巡回') {
+                    showRoomSelection(workType);
+                } else {
+                    currentCell.textContent = workType === '护士站' ? '护' : 
+                                            workType === '日间' ? '日' : '休';
+                    modal.style.display = 'none';
+                    updateStats(currentCell.parentElement);
+                    saveSchedule();
+                }
+            }
+        });
+
+        window.onclick = function(event) {
+            const modal = document.getElementById('scheduleModal');
+            if (event.target === modal) {
+                modal.style.display = 'none';
+            }
+        };
+
+        window.onload = function() {
+            const savedData = localStorage.getItem('scheduleData');
+            if (savedData) {
+                const data = JSON.parse(savedData);
+                const rows = document.querySelectorAll('#scheduleTable tbody tr');
+                
+                data.names.forEach((name, i) => {
+                    if (rows[i]) {
+                        rows[i].querySelector('.name-cell').textContent = name;
+                        data.schedule[i].forEach((value, j) => {
+                            const cell = rows[i].querySelectorAll('.schedule-cell')[j];
+                            if (cell) {
+                                cell.textContent = value;
+                                if (value.includes('洗')) cell.className = 'schedule-cell wash-hand';
+                                if (value.includes('巡')) cell.className = 'schedule-cell tour';
+                            }
+                        });
+                        updateStats(rows[i]);
+                    }
+                });
+            }
+        };
+    </script>
+</body>
+</html>
